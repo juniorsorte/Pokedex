@@ -556,6 +556,47 @@ body.modo-cor .foto{display:none}
 .hist b{color:var(--text);font-weight:500}
 .hist span{margin-left:auto}
 
+/* ---------- SINCRONIZAÇÃO ---------- */
+
+#status-sync{margin-top:4px}
+.dot.sync{background:var(--azul);box-shadow:0 0 8px var(--azul);animation:piscarPonto .8s ease-in-out infinite alternate}
+.dot.erro{background:#FF6B6B;box-shadow:0 0 8px #FF6B6B}
+@keyframes piscarPonto{to{opacity:.3}}
+
+.sync-corpo{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;padding:18px 18px 2px;text-align:left}
+.sync-texto{font-size:13.5px;line-height:1.55;color:#C3CADA}
+.sync-texto b{color:var(--text);font-weight:600}
+.sync-largo{width:100%;height:44px}
+.sync-ou{
+  display:flex;align-items:center;gap:10px;
+  font:500 10.5px/1 "IBM Plex Mono",monospace;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);
+}
+.sync-ou::before,.sync-ou::after{content:"";flex:1;height:1px;background:var(--line-2)}
+.sync-rotulo{font-size:12.5px;font-weight:600}
+.sync-linha{display:flex;gap:8px}
+.sync-input{
+  flex:1;min-width:0;width:100%;height:42px;padding:0 12px;border-radius:12px;
+  background:#0A0E16;border:1px solid var(--line-2);color:var(--text);
+  font:500 16px/1 "IBM Plex Mono",monospace;letter-spacing:.02em;text-transform:uppercase;
+}
+.sync-input::placeholder{color:#465066}
+.sync-input:focus{outline:none;border-color:var(--azul);box-shadow:0 0 0 4px rgba(110,168,255,.15)}
+.sync-nota{font-size:12px;line-height:1.5;color:var(--muted)}
+.sync-erro{font-size:12.5px;line-height:1.45;color:#FF8A8A}
+.sync-status{display:flex;align-items:center;font:500 11.5px/1.3 "IBM Plex Mono",monospace;color:var(--muted)}
+.sync-codigo{padding:14px 10px;border-radius:14px;text-align:center;background:#0A0E16;border:1px dashed var(--line-2)}
+.sync-codigo code{
+  font:600 clamp(12.5px,3.6vw,16px)/1.5 "IBM Plex Mono",monospace;letter-spacing:.04em;
+  color:var(--text);user-select:all;-webkit-user-select:all;overflow-wrap:break-word;   /* quebra só nos traços */
+}
+.sync-corpo .acoes{margin:0}
+.sync-sair{
+  justify-self:center;padding:6px;background:none;border:0;cursor:pointer;
+  font:500 12px/1 "Space Grotesk",sans-serif;color:var(--muted);text-decoration:underline;text-underline-offset:3px;
+}
+.sync-sair:hover,.sync-sair[data-confirmar]{color:#FF8A8A}
+.sync-corpo button:disabled{opacity:.55;cursor:progress}
+
 /* abaixo disso a busca ganha linha própria e o resto divide a linha de baixo */
 @media (max-width:900px){
   .busca-box{flex:1 1 100%;order:-1}
@@ -593,12 +634,16 @@ body.modo-cor .foto{display:none}
             <span class="menu-sub" id="menu-sub">0 Pokémon na coleção</span>
           </div>
 
+          <button class="item" id="sync-abrir">Sincronizar entre aparelhos</button>
           <button class="item" id="modo">Modo: foto</button>
           <button class="item" id="exportar">Exportar backup</button>
           <button class="item" id="importar">Importar backup</button>
           <input type="file" id="arquivo" accept="application/json" hidden>
 
-          <div class="menu-pe" id="status">Carregando…</div>
+          <div class="menu-pe">
+            <div id="status">Carregando…</div>
+            <div id="status-sync" hidden></div>
+          </div>
         </div>
       </div>
     </div>
@@ -677,6 +722,18 @@ body.modo-cor .foto{display:none}
     <div class="lojas" id="lojas"></div>
 
     <div class="hist" id="hist"></div>
+  </div>
+</div>
+
+<div class="modal" id="modal-sync" hidden>
+  <div class="box" role="dialog" aria-modal="true" aria-labelledby="sync-titulo">
+    <div class="box-topo">
+      <span class="lente" aria-hidden="true"></span>
+      <span class="leds" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span class="box-titulo" id="sync-titulo">Sincronizar</span>
+      <button class="fechar" id="sync-fechar" aria-label="Fechar">×</button>
+    </div>
+    <div class="sync-corpo" id="sync-corpo"></div>
   </div>
 </div>
 
@@ -765,8 +822,10 @@ const Salvo = {
     else localStorage.setItem(chave, texto);
   },
 
-  /* espera 250ms para não gravar a cada clique solto */
-  colecao(set){
+  /* espera 250ms para não gravar a cada clique solto; mudança feita
+     aqui também vai para a nuvem (o que veio da nuvem não volta pra ela) */
+  colecao(set, sincronizar = true){
+    if (sincronizar) Sync.agendar();
     clearTimeout(this._t);
     this._t = setTimeout(async ()=>{
       try{
@@ -914,6 +973,14 @@ function filtrar(){
   } else {
     tela.hidden = true;
   }
+}
+
+function pintarColecao(){
+  grid.querySelectorAll(".card").forEach(c=>{
+    const possuo = tenho.has(+c.dataset.id);
+    c.classList.toggle("own", possuo);
+    c.setAttribute("aria-pressed", possuo);
+  });
 }
 
 function contar(){
@@ -1128,6 +1195,7 @@ $("#fechar").addEventListener("click", fecharModal);
 $("#modal").addEventListener("click", e => { if (e.target.id === "modal") fecharModal(); });
 document.addEventListener("keydown", e => {
   if (e.key !== "Escape") return;
+  fecharSync();
   fecharModal();
   abrirMenu(false);
 });
@@ -1152,6 +1220,7 @@ $("#marcar").addEventListener("click", e=>{
 /* ---------- MENU DE PERFIL ---------- */
 
 function abrirMenu(abrir){
+  if (abrir) mostrarSync();
   $("#menu").hidden = !abrir;
   $("#avatar").setAttribute("aria-expanded", abrir);
 }
@@ -1208,8 +1277,7 @@ $("#arquivo").addEventListener("change", async e=>{
 
     if (!confirm(`O backup tem ${ids.length} Pokémon e vai substituir sua coleção atual de ${tenho.size}. Continuar?`)) return;
 
-    tenho = new Set(ids);
-    Salvo.colecao(tenho);
+    aplicarColecao(new Set(ids), true);
 
     if (Array.isArray(d.sorteios)){
       sorteios = d.sorteios;
@@ -1217,17 +1285,277 @@ $("#arquivo").addEventListener("change", async e=>{
       pintarHistorico();
     }
 
-    grid.querySelectorAll(".card").forEach(c=>{
-      const possuo = tenho.has(+c.dataset.id);
-      c.classList.toggle("own", possuo);
-      c.setAttribute("aria-pressed", possuo);
-    });
-    contar(); filtrar();
     aviso(`Coleção restaurada: ${ids.length} Pokémon.`);
   }catch(err){
     aviso("Arquivo inválido. Use um JSON exportado por aqui.");
   }finally{ e.target.value = ""; }
 });
+
+/* ============================================================
+   SINCRONIZAÇÃO — a mesma coleção no computador e no celular
+   ------------------------------------------------------------
+   Cada aparelho guarda um código secreto e a "base": a última
+   lista que veio da nuvem. Ao sincronizar, manda só o que mudou
+   desde a base (adicionar/remover); o Supabase aplica e devolve
+   a lista completa. Assim marcar no celular e desmarcar no PC
+   nunca apagam um ao outro. O histórico de sorteios fica em cada
+   aparelho.
+   ============================================================ */
+
+/* Chave publicável: feita para ficar no navegador (o Supabase a trata
+   como segura em código público). Quem protege a coleção é o banco: a
+   tabela é fechada e a única porta é a função pokedex_sincronizar, que
+   exige o código. A chave secreta do projeto nunca entra aqui. */
+const NUVEM = {
+  url:"https://difdcsjjqwrpsscrzltf.supabase.co",
+  chave:"sb_publishable_csevEN_U9LZ7okLJrnhz9g_04ZMNGYh"
+};
+const SYNC_KEY = "pokedex.sync.v1";
+
+/* 32 símbolos sem 0/O nem 1/I; 24 deles ≈ 120 bits, impossível de adivinhar */
+const LETRAS_CODIGO = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+const normalizarCodigo = c => String(c).toUpperCase().replace(/[^0-9A-Z]/g, "");
+const formatarCodigo   = c => normalizarCodigo(c).match(/.{1,4}/g)?.join("-") ?? "";
+const codigoValido     = c => {
+  const n = normalizarCodigo(c);
+  return n.length === 24 && [...n].every(l => LETRAS_CODIGO.includes(l));
+};
+const novoCodigo = () =>
+  formatarCodigo([...crypto.getRandomValues(new Uint8Array(24))].map(b => LETRAS_CODIGO[b % 32]).join(""));
+
+const haQuanto = ms => {
+  const s = (Date.now() - ms) / 1000;
+  return s < 60 ? "agora" : s < 3600 ? `há ${Math.round(s / 60)} min` : `há ${Math.round(s / 3600)} h`;
+};
+
+const Sync = {
+  codigo:null, base:new Set(), em:0,
+  estado:"desligado",            // desligado | sincronizando | ok | offline | erro
+  _rodando:false, _deNovo:false, _t:null, _pendente:false,
+
+  async carregar(){
+    try{
+      const s = JSON.parse(await Salvo.ler(SYNC_KEY) || "null");
+      if (s?.codigo){
+        this.codigo = s.codigo; this.base = new Set(s.base || []); this.em = s.em || 0; this.estado = "ok";
+      }
+    }catch(e){ /* sem dado salvo: fica desligado */ }
+  },
+
+  async guardar(){
+    const dado = this.codigo ? JSON.stringify({ codigo:this.codigo, base:[...this.base], em:this.em }) : "";
+    try{ await Salvo.gravar(SYNC_KEY, dado); }catch(e){}
+  },
+
+  /* a cada mudança local: junta cliques seguidos num envio só */
+  agendar(){
+    if (!this.codigo) return;
+    this._pendente = true;
+    clearTimeout(this._t);
+    this._t = setTimeout(() => this.agora(), 1200);
+  },
+
+  /* devolve "ok" | "nao_encontrado" | "offline" | "erro" */
+  async agora({ criar = true } = {}){
+    if (!this.codigo) return "erro";
+    if (this._rodando){ this._deNovo = true; return "ok"; }
+    this._rodando = true; this._deNovo = false; this._pendente = false;
+    clearTimeout(this._t);
+    this.estado = "sincronizando"; mostrarSync();
+
+    const enviado   = new Set(tenho);
+    const adicionar = [...enviado].filter(id => !this.base.has(id));
+    const remover   = [...this.base].filter(id => !enviado.has(id));
+    let resultado = "ok";
+    try{
+      const r = await fetch(`${NUVEM.url}/rest/v1/rpc/pokedex_sincronizar`, {
+        method:"POST", keepalive:true,
+        headers:{ apikey:NUVEM.chave, "Content-Type":"application/json" },
+        body:JSON.stringify({ codigo:this.codigo, adicionar, remover, criar })
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.message || "HTTP " + r.status);
+      if (j.encontrado === false){ resultado = "nao_encontrado"; return resultado; }
+
+      /* o que mudou aqui enquanto a resposta vinha continua valendo */
+      const nova = new Set(j.tenho);
+      tenho.forEach(id => { if (!enviado.has(id)) nova.add(id); });
+      enviado.forEach(id => { if (!tenho.has(id)) nova.delete(id); });
+
+      this.base = new Set(j.tenho); this.em = Date.now(); this.estado = "ok";
+      await this.guardar();
+
+      const { entraram, sairam } = aplicarColecao(nova);
+      if (entraram || sairam)
+        aviso(`Coleção atualizada pelo outro aparelho (${[entraram && "+" + entraram, sairam && "−" + sairam].filter(Boolean).join(" / ")}).`);
+      if (nova.size !== this.base.size || [...nova].some(id => !this.base.has(id))) this._deNovo = true;
+    }catch(e){
+      /* fetch sem rede lança TypeError; o resto é recusa do servidor */
+      resultado = e instanceof TypeError ? "offline" : "erro";
+      this.estado = resultado;
+      this._pendente = true;
+    }finally{
+      this._rodando = false;
+      if (resultado === "nao_encontrado") this.estado = "erro";
+      mostrarSync();
+      if (this._deNovo) this.agendar();
+    }
+    return resultado;
+  },
+
+  async desligar(){
+    clearTimeout(this._t);
+    this.codigo = null; this.base = new Set(); this.em = 0; this.estado = "desligado"; this._pendente = false;
+    await this.guardar();
+  }
+};
+
+/* troca a coleção inteira (backup importado ou o que veio da nuvem) */
+function aplicarColecao(nova, sincronizar = false){
+  const entraram = [...nova].filter(id => !tenho.has(id));
+  const sairam   = [...tenho].filter(id => !nova.has(id));
+  if (!entraram.length && !sairam.length) return { entraram:0, sairam:0 };
+
+  tenho = nova;
+  Salvo.colecao(tenho, sincronizar);
+  pintarColecao();
+  entraram.forEach(id => {   // quem chegou abre o bioma, como se tivesse sido marcado aqui
+    const c = grid.querySelector(`.card[data-id="${id}"]`);
+    if (!c) return;
+    c.classList.remove("pulse"); void c.offsetWidth; c.classList.add("pulse");
+  });
+  contar();
+  filtrar();
+  return { entraram:entraram.length, sairam:sairam.length };
+}
+
+/* ---------- o que aparece no menu e na janela ---------- */
+
+function mostrarSync(){
+  const linha = $("#status-sync");
+  const texto = {
+    sincronizando:`<span class="dot sync"></span>Sincronizando…`,
+    ok:`<span class="dot"></span>Sincronizado com a nuvem · ${haQuanto(Sync.em)}`,
+    offline:`<span class="dot warn"></span>Sem internet · sincroniza quando voltar`,
+    erro:`<span class="dot erro"></span>Não consegui sincronizar agora`
+  }[Sync.codigo ? Sync.estado : "desligado"];
+  linha.hidden = !texto;
+  if (texto) linha.innerHTML = texto;
+  const status = $("#sync-status");
+  if (status && texto) status.innerHTML = texto;
+}
+
+function renderizarSync(){
+  const corpo = $("#sync-corpo");
+  corpo.innerHTML = Sync.codigo
+    ? `<p class="sync-status" id="sync-status"></p>
+       <p class="sync-texto">No outro aparelho, abra a Pokédex → <b>J</b> → <b>Sincronizar entre aparelhos</b> e cole este código:</p>
+       <div class="sync-codigo"><code id="sync-mostra">${Sync.codigo}</code></div>
+       <div class="acoes">
+         <button class="primario" data-acao="copiar">Copiar código</button>
+         <button class="ghost" data-acao="agora">Sincronizar agora</button>
+       </div>
+       <p class="sync-nota">Guarde como uma senha: quem tiver o código vê e edita sua coleção.</p>
+       <button class="sync-sair" data-acao="sair">Desconectar este aparelho</button>`
+    : `<p class="sync-texto">Use a mesma coleção no computador e no celular. Crie um código aqui e cole o mesmo código no outro aparelho.</p>
+       <button class="primario sync-largo" data-acao="criar">Criar código neste aparelho</button>
+       <div class="sync-ou">ou</div>
+       <label class="sync-rotulo" for="sync-codigo">Já tem um código?</label>
+       <div class="sync-linha">
+         <input id="sync-codigo" class="sync-input" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX"
+                autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="40">
+         <button class="ghost" data-acao="conectar">Conectar</button>
+       </div>
+       <p class="sync-erro" id="sync-erro" hidden></p>
+       <p class="sync-nota">O que já está marcado aqui é somado à coleção da nuvem. Nada se perde.</p>`;
+  mostrarSync();
+}
+
+const erroSync = msg => { const e = $("#sync-erro"); if (e){ e.textContent = msg; e.hidden = !msg; } };
+
+function abrirSync(){
+  abrirMenu(false);
+  renderizarSync();
+  $("#modal-sync").hidden = false;
+  $("#modal-sync").querySelector("[data-acao]")?.focus();
+}
+const fecharSync = () => { $("#modal-sync").hidden = true; };
+
+$("#sync-abrir").addEventListener("click", abrirSync);
+$("#sync-fechar").addEventListener("click", fecharSync);
+$("#modal-sync").addEventListener("click", e => { if (e.target.id === "modal-sync") fecharSync(); });
+$("#sync-corpo").addEventListener("keydown", e => {
+  if (e.key === "Enter" && e.target.id === "sync-codigo") $("#sync-corpo [data-acao=conectar]").click();
+});
+
+$("#sync-corpo").addEventListener("click", async e=>{
+  const botao = e.target.closest("[data-acao]");
+  if (!botao) return;
+  const acao = botao.dataset.acao;
+
+  if (acao === "criar"){
+    botao.disabled = true;
+    Sync.codigo = novoCodigo(); Sync.base = new Set();
+    await Sync.guardar();
+    const r = await Sync.agora();
+    if (r === "ok"){ renderizarSync(); aviso("Coleção enviada para a nuvem."); }
+    else {
+      await Sync.desligar(); renderizarSync();
+      erroSync(r === "offline" ? "Sem internet agora. Tente de novo quando conectar." : "O servidor recusou. Tente de novo em instantes.");
+    }
+  }
+
+  if (acao === "conectar"){
+    const digitado = $("#sync-codigo").value;
+    if (!codigoValido(digitado)){
+      erroSync("Esse código não está completo: são 24 letras e números, como K7QM-3XRT-…");
+      return;
+    }
+    botao.disabled = true; erroSync("");
+    Sync.codigo = formatarCodigo(digitado); Sync.base = new Set();
+    const r = await Sync.agora({ criar:false });
+    if (r === "ok"){
+      await Sync.guardar(); renderizarSync();
+      aviso("Conectado. Os dois aparelhos agora têm a mesma coleção.");
+    } else {
+      await Sync.desligar(); renderizarSync();
+      $("#sync-codigo").value = digitado;
+      erroSync(r === "nao_encontrado" ? "Não achei esse código. Confira se copiou igual ao do outro aparelho."
+             : r === "offline" ? "Sem internet agora. Tente de novo quando conectar."
+             : "O servidor recusou. Tente de novo em instantes.");
+    }
+  }
+
+  if (acao === "copiar"){
+    try{ await navigator.clipboard.writeText(Sync.codigo); aviso("Código copiado."); }
+    catch(err){   // sem permissão de área de transferência: deixa o código selecionado
+      const r = document.createRange(); r.selectNodeContents($("#sync-mostra"));
+      getSelection().removeAllRanges(); getSelection().addRange(r);
+      aviso("Código selecionado. Copie com Ctrl+C ou segurando o dedo.");
+    }
+  }
+
+  if (acao === "agora") Sync.agora();
+
+  if (acao === "sair"){
+    if (!botao.dataset.confirmar){   // dois toques, para não desconectar sem querer
+      botao.dataset.confirmar = "1";
+      botao.textContent = "Toque de novo para desconectar";
+      setTimeout(() => { if (botao.isConnected){ delete botao.dataset.confirmar; botao.textContent = "Desconectar este aparelho"; } }, 4000);
+      return;
+    }
+    await Sync.desligar(); renderizarSync();
+    aviso("Aparelho desconectado. A coleção continua salva aqui e na nuvem.");
+  }
+});
+
+/* volta para a aba, recupera a internet ou passa um minuto: confere a nuvem */
+document.addEventListener("visibilitychange", ()=>{
+  if (document.visibilityState === "visible") Sync.agora();
+  else if (Sync._pendente) Sync.agora();   // saindo do app com mudança por enviar
+});
+addEventListener("online", () => Sync.agora());
+setInterval(() => { if (document.visibilityState === "visible" && Sync.estado !== "sincronizando") Sync.agora(); }, 60000);
 
 /* ============================================================
    INÍCIO
@@ -1257,13 +1585,13 @@ $("#arquivo").addEventListener("change", async e=>{
 
     montar();
     contar();
-    grid.querySelectorAll(".card").forEach(c=>{
-      if (tenho.has(+c.dataset.id)){
-        c.classList.add("own");
-        c.setAttribute("aria-pressed","true");
-      }
-    });
+    pintarColecao();
     status(true);
+
+    /* 4. nuvem: se este aparelho está conectado, traz o que mudou nos outros */
+    await Sync.carregar();
+    mostrarSync();
+    Sync.agora();
 
   }catch(err){
     $("#tela").classList.remove("carregando");
