@@ -1,0 +1,5 @@
+# Segredos nunca vão para o GitHub (o repositório e o site são públicos).
+# Só o .env.example, com valores de exemplo, pode subir.
+.env
+.env.*
+!.env.example
