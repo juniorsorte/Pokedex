@@ -610,7 +610,7 @@ body.modo-cor .foto{display:none}
 .scan-msg{display:grid;gap:8px;padding:26px 8px;font-size:13px;color:var(--muted);line-height:1.5}
 .scan-msg b{font-size:16px;color:var(--text)}
 .scan-det{font-size:11.5px;text-align:left}
-.scan-det summary{cursor:pointer;text-align:center}
+.scan-det b{display:block;text-align:center;font-size:12px}.scan-det small{display:block;text-align:center;margin-top:6px;color:var(--muted);font-size:10px}
 .scan-det pre{margin-top:8px;padding:10px;background:var(--surface);border:1px solid var(--line);border-radius:10px;white-space:pre-wrap;word-break:break-word;font-family:"IBM Plex Mono",monospace;font-size:10.5px;max-height:30vh;overflow:auto}
 .scan-arquivo{display:inline-flex;align-items:center;cursor:pointer}
 #scan-res .visor{margin:0 -16px}
@@ -806,7 +806,7 @@ body.modo-cor .foto{display:none}
       <div id="scan-erro" class="scan-msg" hidden>
         <b>Não consegui ler o número</b>
         <span id="scan-erro-t"></span>
-        <details class="scan-det"><summary>O que o leitor enxergou</summary><pre id="scan-debug"></pre></details>
+        <div class="scan-det"><b>O que o leitor enxergou</b><pre id="scan-debug"></pre><small>scanner v3</small></div>
         <div class="acoes">
           <button class="primario" id="scan-retry" type="button">Tentar de novo</button>
         </div>
