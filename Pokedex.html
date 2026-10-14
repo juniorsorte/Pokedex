@@ -773,7 +773,7 @@ body.modo-cor .foto{display:none}
           <video id="scan-video" playsinline muted></video>
           <span class="scan-guia" aria-hidden="true"></span>
         </div>
-        <p class="scan-dica">Enquadre a carta inteira, com a linha <b>No.0025</b> legível e sem reflexo.</p>
+        <p class="scan-dica">Enquadre a carta inteira, com o <b>nome no topo</b> legível e sem reflexo. Cartas japonesas também são lidas pela linha <b>No.</b></p>
         <div class="acoes">
           <button class="primario" id="scan-capturar" type="button">Capturar</button>
           <label class="ghost scan-arquivo">Usar foto<input type="file" id="scan-arquivo" accept="image/*" capture="environment" hidden></label>
@@ -806,7 +806,7 @@ body.modo-cor .foto{display:none}
       <div id="scan-erro" class="scan-msg" hidden>
         <b>Não consegui ler o número</b>
         <span id="scan-erro-t"></span>
-        <div class="scan-det"><b>O que o leitor enxergou</b><pre id="scan-debug"></pre><small>scanner v3</small></div>
+        <div class="scan-det"><b>O que o leitor enxergou</b><pre id="scan-debug"></pre><small>scanner v4</small></div>
         <div class="acoes">
           <button class="primario" id="scan-retry" type="button">Tentar de novo</button>
         </div>
@@ -1372,14 +1372,24 @@ const Scan = {
   },
 
   /* reduz e põe em tons de cinza: lê mais rápido e erra menos */
-  preparar(fonte, w, h){
-    const k = Math.min(1, 2400 / Math.max(w, h));
+  preparar(fonte, w, h, rec){
+    const [rx, ry, rw, rh] = rec || [0, 0, w, h];
+    const k = Math.min(1, 2400 / Math.max(rw, rh));
     const c = document.createElement("canvas");
-    c.width = Math.round(w*k); c.height = Math.round(h*k);
+    c.width = Math.round(rw*k); c.height = Math.round(rh*k);
     const x = c.getContext("2d");
     x.filter = "grayscale(1) contrast(1.35)";
-    x.drawImage(fonte, 0, 0, c.width, c.height);
+    x.drawImage(fonte, rx, ry, rw, rh, 0, 0, c.width, c.height);
     return c;
+  },
+
+  /* a câmera mostra o vídeo "cobrindo" a caixa; recorta só o que está dentro da moldura */
+  recorteDaMoldura(v){
+    const vw = v.videoWidth, vh = v.videoHeight, b = v.getBoundingClientRect();
+    const esc = Math.max(b.width / vw, b.height / vh);
+    const sw = b.width / esc, sh = b.height / esc;
+    const sx = (vw - sw) / 2, sy = (vh - sh) / 2;
+    return [sx + sw*.14, sy + sh*.07, sw*.72, sh*.86];
   },
 
   /* recorta uma faixa horizontal, amplia e (opcional) binariza pelo método de Otsu.
@@ -1390,6 +1400,7 @@ const Scan = {
     const c = document.createElement("canvas");
     c.width = largura; c.height = Math.round(sh * k);
     const x = c.getContext("2d", { willReadFrequently:true });
+    if (!binarizar) x.filter = "grayscale(1) contrast(1.3)";
     x.drawImage(fonte, 0, sy, fonte.width, sh, 0, 0, c.width, c.height);
     if (binarizar){
       const img = x.getImageData(0, 0, c.width, c.height), d = img.data;
@@ -1413,14 +1424,17 @@ const Scan = {
     return c;
   },
 
-  /* várias tentativas, da mais barata para a mais cuidadosa; para na primeira que achar */
+  /* várias tentativas, da mais barata para a mais cuidadosa; para na primeira que achar.
+     "n" procura o número "No.0025" (cartas japonesas); "nome" procura o nome no topo
+     da carta (cartas em português, inglês...), que não traz o número da Pokédex */
   variantes(c){
     return [
-      ["inteira",              c,                                      "11"],
-      ["faixa central p&b",    this.faixa(c, .30, .82, 2000, true,  false), "6"],
-      ["faixa central p&b inv", this.faixa(c, .30, .82, 2000, true,  true),  "6"],
-      ["inteira p&b",          this.faixa(c, 0,   1,   2000, true,  false), "11"],
-      ["inteira p&b inv",      this.faixa(c, 0,   1,   2000, true,  true),  "11"],
+      ["inteira",             "n",    c,                                         "11"],
+      ["topo p&b",            "nome", this.faixa(c, 0,   .20, 1600, true,  false), "11"],
+      ["topo cinza",          "nome", this.faixa(c, 0,   .20, 1600, false, false), "11"],
+      ["faixa central p&b",   "n",    this.faixa(c, .30, .82, 2000, true,  false), "6"],
+      ["topo p&b inv",        "nome", this.faixa(c, 0,   .20, 1600, true,  true),  "11"],
+      ["faixa central p&b inv","n",   this.faixa(c, .30, .82, 2000, true,  true),  "6"],
     ];
   },
 
@@ -1429,13 +1443,38 @@ const Scan = {
   extrair(texto){
     const valido = n => n >= 1 && n <= TOTAL;
     const num = s => +s.replace(/[Oo]/g, "0").replace(/[Il|]/g, "1");
-    for (const m of texto.matchAll(/N\s*[o0O]\s*[.,:;·]?\s*([0-9OoIl|]{1,4})/gi)){
+    for (const m of texto.matchAll(/Ns*[o0O]s*[.,:;·]?s*([0-9OoIl|]{1,4})/gi)){
       const n = num(m[1]);
       if (valido(n)) return n;
     }
-    for (const m of texto.matchAll(/\b0(\d{3})\b/g))
+    for (const m of texto.matchAll(/0(d{3})/g))
       if (valido(+m[1])) return +m[1];
     return null;
+  },
+
+  /* procura um nome de Pokémon no texto do topo da carta. Nome longo pode estar colado
+     ou com 1 letra errada; nome curto (Mew, Muk) só vale como palavra inteira */
+  extrairNome(texto){
+    const limpa = t => t.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+    const palavras = limpa(texto).split(/[^a-z0-9]+/).filter(p => p.length >= 3);
+    const junto = limpa(texto).replace(/[^a-z0-9]/g, "");
+    const dist1 = (a, b) => {
+      if (Math.abs(a.length - b.length) > 1) return false;
+      let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++;
+      const A = a.slice(i), B = b.slice(i);
+      return A.slice(1) === B || A === B.slice(1) || A.slice(1) === B.slice(1);
+    };
+    let melhor = null, pontos = 0;
+    for (const [id, nome] of POKEMON){
+      const n = limpa(nome).replace(/[^a-z0-9]/g, "");
+      if (n.length < 3) continue;
+      let p = 0;
+      if (n.length >= 5 && junto.includes(n)) p = n.length;
+      else if (palavras.includes(n)) p = n.length;
+      else if (n.length >= 6 && palavras.some(w => dist1(w, n))) p = n.length - 1;
+      if (p > pontos){ pontos = p; melhor = id; }
+    }
+    return melhor;
   },
 
   async ler(canvas){
@@ -1447,15 +1486,15 @@ const Scan = {
     try{
       const w = await this.leitor();
       let i = 0;
-      for (const [nome, img, psm] of this.variantes(canvas)){
-        $("#scan-lendo-s").textContent = `Tentativa ${++i} de 5`;
+      for (const [nome, modo, img, psm] of this.variantes(canvas)){
+        $("#scan-lendo-s").textContent = `Tentativa ${++i} de 6`;
         await w.setParameters({ tessedit_pageseg_mode:psm });
         const { data } = await w.recognize(img);
-        const id = this.extrair(data.text);
+        const id = modo === "n" ? this.extrair(data.text) : this.extrairNome(data.text);
         if (id) return this.mostrar(id);
         lido.push(`[${nome}] ` + data.text.replace(/\s+/g, " ").trim().slice(0, 160));
       }
-      this.erro("Aproxime a carta, evite reflexo e deixe a linha “No.” inteira dentro da moldura. Também dá para usar a busca por nome.", lido);
+      this.erro("Deixe o nome da carta (no topo) dentro da moldura, sem reflexo e bem focado. Também dá para usar a busca por nome.", lido);
     }catch(err){
       this.erro("Não deu para baixar ou rodar o leitor. Confira a conexão e tente de novo.", [String(err?.message || err)]);
     }
@@ -1502,7 +1541,7 @@ $("#scan-outra").addEventListener("click", () => Scan.outra());
 $("#scan-capturar").addEventListener("click", () => {
   const v = $("#scan-video");
   if (!v.videoWidth) return;
-  Scan.ler(Scan.preparar(v, v.videoWidth, v.videoHeight));
+  Scan.ler(Scan.preparar(v, v.videoWidth, v.videoHeight, Scan.recorteDaMoldura(v)));
 });
 
 $("#scan-arquivo").addEventListener("change", async e => {
