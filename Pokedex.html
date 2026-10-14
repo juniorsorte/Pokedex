@@ -598,6 +598,20 @@ body.modo-cor .foto{display:none}
 .sync-corpo button:disabled{opacity:.55;cursor:progress}
 
 /* abaixo disso a busca ganha linha própria e o resto divide a linha de baixo */
+/* ---------- SCANNER DE CARTA ---------- */
+.btn-scan{display:inline-flex;align-items:center;gap:8px;height:40px;padding:0 16px;white-space:nowrap}
+.btn-scan svg{width:16px;height:16px;flex:none}
+.scan-corpo{padding:16px 16px 4px;text-align:center}
+.scan-video{position:relative;border-radius:14px;overflow:hidden;background:#000;aspect-ratio:3/4;max-height:56vh;margin:0 auto;border:1px solid var(--line-2)}
+.scan-video video{width:100%;height:100%;object-fit:cover;display:block}
+.scan-guia{position:absolute;inset:7% 14%;border:2px dashed rgba(255,255,255,.55);border-radius:12px;pointer-events:none}
+.scan-dica{font-size:12.5px;color:var(--muted);margin:10px 4px 0;line-height:1.45}
+.scan-dica b{color:var(--text);font-family:"IBM Plex Mono",monospace;font-weight:500}
+.scan-msg{display:grid;gap:8px;padding:26px 8px;font-size:13px;color:var(--muted);line-height:1.5}
+.scan-msg b{font-size:16px;color:var(--text)}
+.scan-arquivo{display:inline-flex;align-items:center;cursor:pointer}
+#scan-res .visor{margin:0 -16px}
+
 @media (max-width:900px){
   .busca-box{flex:1 1 100%;order:-1}
   .select{flex:1 1 auto}
@@ -679,6 +693,10 @@ body.modo-cor .foto{display:none}
         <option value="9">Geração 9</option>
       </select>
       <select id="tipo" class="select" aria-label="Tipo"><option value="">Todos os tipos</option></select>
+      <button class="ghost btn-scan" id="escanear" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M4 12h16"/></svg>
+        Escanear carta
+      </button>
     </div>
   </div>
 </header>
@@ -734,6 +752,62 @@ body.modo-cor .foto{display:none}
       <button class="fechar" id="sync-fechar" aria-label="Fechar">×</button>
     </div>
     <div class="sync-corpo" id="sync-corpo"></div>
+  </div>
+</div>
+
+<div class="modal" id="modal-scan" hidden>
+  <div class="box" role="dialog" aria-modal="true" aria-labelledby="scan-titulo">
+    <div class="box-topo">
+      <span class="lente" aria-hidden="true"></span>
+      <span class="leds" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span class="box-titulo" id="scan-titulo">Escanear carta</span>
+      <button class="fechar" id="scan-fechar" aria-label="Fechar">×</button>
+    </div>
+
+    <div class="scan-corpo">
+      <div id="scan-cam">
+        <div class="scan-video">
+          <video id="scan-video" playsinline muted></video>
+          <span class="scan-guia" aria-hidden="true"></span>
+        </div>
+        <p class="scan-dica">Enquadre a carta inteira, com a linha <b>No.0025</b> legível e sem reflexo.</p>
+        <div class="acoes">
+          <button class="primario" id="scan-capturar" type="button">Capturar</button>
+          <label class="ghost scan-arquivo">Usar foto<input type="file" id="scan-arquivo" accept="image/*" capture="environment" hidden></label>
+        </div>
+      </div>
+
+      <div id="scan-lendo" class="scan-msg" hidden>
+        <b id="scan-lendo-t">Lendo a carta…</b>
+        <span id="scan-lendo-s"></span>
+      </div>
+
+      <div id="scan-res" hidden>
+        <div class="visor">
+          <div class="palco acerto" id="scan-palco">
+            <span class="art">
+              <img class="foto" id="scan-foto" alt="">
+              <span class="silh" id="scan-silh"></span>
+            </span>
+          </div>
+          <div class="s-num"  id="scan-num"></div>
+          <div class="s-nome" id="scan-nome"></div>
+          <div class="tags"   id="scan-tags"></div>
+        </div>
+        <div class="acoes">
+          <button class="primario" id="scan-ok" type="button">Confirmar</button>
+          <button class="ghost" id="scan-outra" type="button">Não é este</button>
+        </div>
+      </div>
+
+      <div id="scan-erro" class="scan-msg" hidden>
+        <b>Não consegui ler o número</b>
+        <span id="scan-erro-t"></span>
+        <div class="acoes">
+          <button class="primario" id="scan-retry" type="button">Tentar de novo</button>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -1197,24 +1271,196 @@ document.addEventListener("keydown", e => {
   if (e.key !== "Escape") return;
   fecharSync();
   fecharModal();
+  if (!$("#modal-scan").hidden) Scan.fechar();
   abrirMenu(false);
 });
 
-$("#marcar").addEventListener("click", e=>{
-  const id = +e.target.dataset.id;
+function marcarId(id){
   tenho.add(id);
   Salvo.colecao(tenho);
 
   const card = grid.querySelector(`.card[data-id="${id}"]`);
   if (card){
+    card.classList.remove("pulse");
+    void card.offsetWidth;
     card.classList.add("own", "pulse");
     card.setAttribute("aria-pressed","true");
   }
   contar();
   if (filtro.estado !== "all") filtrar();
+}
 
+$("#marcar").addEventListener("click", e=>{
+  marcarId(+e.target.dataset.id);
   $("#modal").hidden = true;
   aviso("Marcado como seu.");
+});
+
+/* ---------- SCANNER DE CARTA ----------
+   Lê o número da Pokédex impresso na carta ("No.0025"). Cartas japonesas
+   também trazem essa linha em letras latinas, então o OCR em inglês basta.
+   A biblioteca só é baixada na primeira vez que o scanner é aberto. */
+
+const OCR_JS   = "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js";
+const OCR_LANG = "https://cdn.jsdelivr.net/npm/@tesseract.js-data/eng/4.0.0_best_int";
+
+const Scan = {
+  stream:null, worker:null, achado:null,
+
+  tela(qual){
+    ["cam","lendo","res","erro"].forEach(t => $("#scan-"+t).hidden = t !== qual);
+  },
+
+  async abrir(){
+    $("#modal-scan").hidden = false;
+    this.tela("cam");
+    await this.ligarCamera();
+  },
+
+  fechar(){
+    $("#modal-scan").hidden = true;
+    this.desligarCamera();
+  },
+
+  async ligarCamera(){
+    if (this.stream || !navigator.mediaDevices?.getUserMedia) return;
+    try{
+      this.stream = await navigator.mediaDevices.getUserMedia({
+        video:{ facingMode:{ ideal:"environment" }, width:{ ideal:1920 } }, audio:false
+      });
+      const v = $("#scan-video");
+      v.srcObject = this.stream;
+      await v.play();
+    }catch{
+      $("#scan-capturar").hidden = true;       // sem câmera: sobra o "Usar foto"
+      $(".scan-dica").textContent = "Sem acesso à câmera. Toque em “Usar foto” para tirar ou escolher uma foto da carta.";
+    }
+  },
+
+  desligarCamera(){
+    this.stream?.getTracks().forEach(t => t.stop());
+    this.stream = null;
+    $("#scan-video").srcObject = null;
+  },
+
+  carregarBiblioteca(){
+    if (window.Tesseract) return Promise.resolve();
+    return new Promise((ok, falha)=>{
+      const s = document.createElement("script");
+      s.src = OCR_JS; s.onload = ok; s.onerror = () => falha(new Error("biblioteca"));
+      document.head.appendChild(s);
+    });
+  },
+
+  async leitor(){
+    if (this.worker) return this.worker;
+    $("#scan-lendo-s").textContent = "Baixando o leitor (só na primeira vez)…";
+    await this.carregarBiblioteca();
+    this.worker = await Tesseract.createWorker("eng", 1, {
+      langPath:OCR_LANG,
+      logger:m => {
+        if (m.status && typeof m.progress === "number")
+          $("#scan-lendo-s").textContent = `${m.status} ${Math.round(m.progress*100)}%`;
+      }
+    });
+    await this.worker.setParameters({ tessedit_pageseg_mode:"11" });   // texto esparso
+    return this.worker;
+  },
+
+  /* reduz e põe em tons de cinza: lê mais rápido e erra menos */
+  preparar(fonte, w, h){
+    const k = Math.min(1, 1600 / Math.max(w, h));
+    const c = document.createElement("canvas");
+    c.width = Math.round(w*k); c.height = Math.round(h*k);
+    const x = c.getContext("2d");
+    x.filter = "grayscale(1) contrast(1.35)";
+    x.drawImage(fonte, 0, 0, c.width, c.height);
+    return c;
+  },
+
+  /* procura "No.0025" (aceita 0 no lugar do o e ruído no ponto); se não achar,
+     aceita um número solto de 4 dígitos começando em 0 */
+  extrair(texto){
+    const valido = n => n >= 1 && n <= TOTAL;
+    for (const m of texto.matchAll(/N\s*[o0O]\s*[.,:;]?\s*0*(\d{1,4})/gi))
+      if (valido(+m[1])) return +m[1];
+    for (const m of texto.matchAll(/\b0(\d{3})\b/g))
+      if (valido(+m[1])) return +m[1];
+    return null;
+  },
+
+  async ler(canvas){
+    this.desligarCamera();
+    this.tela("lendo");
+    $("#scan-lendo-t").textContent = "Lendo a carta…";
+    $("#scan-lendo-s").textContent = "";
+    try{
+      const w = await this.leitor();
+      $("#scan-lendo-s").textContent = "";
+      const { data } = await w.recognize(canvas);
+      const id = this.extrair(data.text);
+      id ? this.mostrar(id)
+         : this.erro("Aproxime a carta, evite reflexo e deixe a linha “No.” inteira dentro da moldura. Também dá para usar a busca por nome.");
+    }catch{
+      this.erro("Não deu para baixar ou rodar o leitor. Confira a conexão e tente de novo.");
+    }
+  },
+
+  erro(msg){
+    $("#scan-erro-t").textContent = msg;
+    this.tela("erro");
+  },
+
+  mostrar(id){
+    const p = POKEMON.find(x => x[0] === id);
+    if (!p) return this.erro("Esse número não existe na Pokédex.");
+    const [, nome, tipos] = p;
+    this.achado = id;
+    const url = SPRITE(id);
+    $("#scan-silh").style.setProperty("--sprite", `url('${url}')`);
+    $("#scan-foto").src = url;
+    $("#scan-palco").style.setProperty("--c", CORES[tipos[0]]);
+    $("#scan-num").textContent  = pad(id);
+    $("#scan-nome").textContent = nome;
+    $("#scan-tags").innerHTML   = etiquetas(tipos);
+    const jaTenho = tenho.has(id);
+    $("#scan-ok").textContent = jaTenho ? "Já está na coleção" : "Confirmar";
+    $("#scan-ok").disabled = jaTenho;
+    this.tela("res");
+  },
+
+  async outra(){
+    this.tela("cam");
+    await this.ligarCamera();
+  }
+};
+
+$("#escanear").addEventListener("click", () => Scan.abrir());
+$("#scan-fechar").addEventListener("click", () => Scan.fechar());
+$("#modal-scan").addEventListener("click", e => { if (e.target.id === "modal-scan") Scan.fechar(); });
+$("#scan-retry").addEventListener("click", () => Scan.outra());
+$("#scan-outra").addEventListener("click", () => Scan.outra());
+
+$("#scan-capturar").addEventListener("click", () => {
+  const v = $("#scan-video");
+  if (!v.videoWidth) return;
+  Scan.ler(Scan.preparar(v, v.videoWidth, v.videoHeight));
+});
+
+$("#scan-arquivo").addEventListener("change", async e => {
+  const f = e.target.files[0];
+  e.target.value = "";
+  if (!f) return;
+  const img = await createImageBitmap(f);
+  Scan.ler(Scan.preparar(img, img.width, img.height));
+});
+
+$("#scan-ok").addEventListener("click", () => {
+  if (Scan.achado == null) return;
+  const nome = POKEMON.find(p => p[0] === Scan.achado)[1];
+  marcarId(Scan.achado);
+  aviso(`${nome} marcado como seu.`);
+  Scan.outra();                       // já deixa a câmera pronta pra próxima carta
 });
 
 /* ---------- MENU DE PERFIL ---------- */
