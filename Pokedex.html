@@ -609,6 +609,9 @@ body.modo-cor .foto{display:none}
 .scan-dica b{color:var(--text);font-family:"IBM Plex Mono",monospace;font-weight:500}
 .scan-msg{display:grid;gap:8px;padding:26px 8px;font-size:13px;color:var(--muted);line-height:1.5}
 .scan-msg b{font-size:16px;color:var(--text)}
+.scan-det{font-size:11.5px;text-align:left}
+.scan-det summary{cursor:pointer;text-align:center}
+.scan-det pre{margin-top:8px;padding:10px;background:var(--surface);border:1px solid var(--line);border-radius:10px;white-space:pre-wrap;word-break:break-word;font-family:"IBM Plex Mono",monospace;font-size:10.5px;max-height:30vh;overflow:auto}
 .scan-arquivo{display:inline-flex;align-items:center;cursor:pointer}
 #scan-res .visor{margin:0 -16px}
 
@@ -803,6 +806,7 @@ body.modo-cor .foto{display:none}
       <div id="scan-erro" class="scan-msg" hidden>
         <b>Não consegui ler o número</b>
         <span id="scan-erro-t"></span>
+        <details class="scan-det"><summary>O que o leitor enxergou</summary><pre id="scan-debug"></pre></details>
         <div class="acoes">
           <button class="primario" id="scan-retry" type="button">Tentar de novo</button>
         </div>
@@ -1369,7 +1373,7 @@ const Scan = {
 
   /* reduz e põe em tons de cinza: lê mais rápido e erra menos */
   preparar(fonte, w, h){
-    const k = Math.min(1, 1600 / Math.max(w, h));
+    const k = Math.min(1, 2400 / Math.max(w, h));
     const c = document.createElement("canvas");
     c.width = Math.round(w*k); c.height = Math.round(h*k);
     const x = c.getContext("2d");
@@ -1378,12 +1382,57 @@ const Scan = {
     return c;
   },
 
-  /* procura "No.0025" (aceita 0 no lugar do o e ruído no ponto); se não achar,
-     aceita um número solto de 4 dígitos começando em 0 */
+  /* recorta uma faixa horizontal, amplia e (opcional) binariza pelo método de Otsu.
+     A linha "No." é pequena: ampliada e em preto e branco o OCR lê muito melhor */
+  faixa(fonte, de, ate, largura, binarizar, inverter){
+    const sy = fonte.height * de, sh = fonte.height * (ate - de);
+    const k = largura / fonte.width;
+    const c = document.createElement("canvas");
+    c.width = largura; c.height = Math.round(sh * k);
+    const x = c.getContext("2d", { willReadFrequently:true });
+    x.drawImage(fonte, 0, sy, fonte.width, sh, 0, 0, c.width, c.height);
+    if (binarizar){
+      const img = x.getImageData(0, 0, c.width, c.height), d = img.data;
+      const h = new Array(256).fill(0);
+      for (let i = 0; i < d.length; i += 4) h[d[i] = d[i+1] = d[i+2] = (d[i]*.3 + d[i+1]*.59 + d[i+2]*.11) | 0]++;
+      let soma = 0; for (let t = 0; t < 256; t++) soma += t * h[t];
+      let sb = 0, wb = 0, melhor = 0, corte = 128; const n = d.length / 4;
+      for (let t = 0; t < 256; t++){
+        wb += h[t]; if (!wb) continue;
+        const wf = n - wb; if (!wf) break;
+        sb += t * h[t];
+        const mb = sb / wb, mf = (soma - sb) / wf, v = wb * wf * (mb - mf) ** 2;
+        if (v > melhor){ melhor = v; corte = t; }
+      }
+      for (let i = 0; i < d.length; i += 4){
+        const claro = d[i] > corte;
+        d[i] = d[i+1] = d[i+2] = (claro !== !!inverter) ? 255 : 0;
+      }
+      x.putImageData(img, 0, 0);
+    }
+    return c;
+  },
+
+  /* várias tentativas, da mais barata para a mais cuidadosa; para na primeira que achar */
+  variantes(c){
+    return [
+      ["inteira",              c,                                      "11"],
+      ["faixa central p&b",    this.faixa(c, .30, .82, 2000, true,  false), "6"],
+      ["faixa central p&b inv", this.faixa(c, .30, .82, 2000, true,  true),  "6"],
+      ["inteira p&b",          this.faixa(c, 0,   1,   2000, true,  false), "11"],
+      ["inteira p&b inv",      this.faixa(c, 0,   1,   2000, true,  true),  "11"],
+    ];
+  },
+
+  /* procura "No.0025". Tolera o que o OCR confunde: 0 no lugar de o, O/I/l/| no lugar
+     de dígitos e ruído no ponto. Sem "No.", aceita um número de 4 dígitos começando em 0 */
   extrair(texto){
     const valido = n => n >= 1 && n <= TOTAL;
-    for (const m of texto.matchAll(/N\s*[o0O]\s*[.,:;]?\s*0*(\d{1,4})/gi))
-      if (valido(+m[1])) return +m[1];
+    const num = s => +s.replace(/[Oo]/g, "0").replace(/[Il|]/g, "1");
+    for (const m of texto.matchAll(/N\s*[o0O]\s*[.,:;·]?\s*([0-9OoIl|]{1,4})/gi)){
+      const n = num(m[1]);
+      if (valido(n)) return n;
+    }
     for (const m of texto.matchAll(/\b0(\d{3})\b/g))
       if (valido(+m[1])) return +m[1];
     return null;
@@ -1394,20 +1443,29 @@ const Scan = {
     this.tela("lendo");
     $("#scan-lendo-t").textContent = "Lendo a carta…";
     $("#scan-lendo-s").textContent = "";
+    const lido = [];
     try{
       const w = await this.leitor();
-      $("#scan-lendo-s").textContent = "";
-      const { data } = await w.recognize(canvas);
-      const id = this.extrair(data.text);
-      id ? this.mostrar(id)
-         : this.erro("Aproxime a carta, evite reflexo e deixe a linha “No.” inteira dentro da moldura. Também dá para usar a busca por nome.");
-    }catch{
-      this.erro("Não deu para baixar ou rodar o leitor. Confira a conexão e tente de novo.");
+      let i = 0;
+      for (const [nome, img, psm] of this.variantes(canvas)){
+        $("#scan-lendo-s").textContent = `Tentativa ${++i} de 5`;
+        await w.setParameters({ tessedit_pageseg_mode:psm });
+        const { data } = await w.recognize(img);
+        const id = this.extrair(data.text);
+        if (id) return this.mostrar(id);
+        lido.push(`[${nome}] ` + data.text.replace(/\s+/g, " ").trim().slice(0, 160));
+      }
+      this.erro("Aproxime a carta, evite reflexo e deixe a linha “No.” inteira dentro da moldura. Também dá para usar a busca por nome.", lido);
+    }catch(err){
+      this.erro("Não deu para baixar ou rodar o leitor. Confira a conexão e tente de novo.", [String(err?.message || err)]);
     }
   },
 
-  erro(msg){
+  erro(msg, detalhe){
     $("#scan-erro-t").textContent = msg;
+    const d = $("#scan-debug");
+    d.hidden = !detalhe?.length;
+    d.textContent = (detalhe || []).join("\n");
     this.tela("erro");
   },
 
